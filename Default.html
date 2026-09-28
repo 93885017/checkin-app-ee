@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VIP Check-in Scanner</title>
+    <!-- Load the HTML5 QR Code Library -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background: #f4f4f9; text-align: center; }
+        #app-container { max-width: 600px; margin: 0 auto; background: #fff; min-height: 100vh; display: flex; flex-direction: column; }
+        
+        /* State 1: Scanner */
+        #scanner-view { padding: 20px; flex-grow: 1; }
+        #reader { width: 100%; border: none; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        
+        /* State 2: Loading */
+        #loading-view { display: none; flex-grow: 1; padding-top: 40%; font-size: 20px; color: #555; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* State 3: Result Lock Screen */
+        #result-view { display: none; flex-grow: 1; padding: 40px 20px; color: white; display: flex; flex-direction: column; justify-content: center; }
+        .success-bg { background-color: #27ae60 !important; }
+        .warning-bg { background-color: #e74c3c !important; }
+        .error-bg { background-color: #f39c12 !important; }
+        
+        #status-icon { font-size: 80px; margin-bottom: 10px; }
+        #status-title { font-size: 32px; font-weight: bold; margin: 0 0 10px 0; }
+        #guest-name { font-size: 48px; font-weight: 900; margin: 0 0 10px 0; }
+        #guest-id { font-size: 20px; opacity: 0.9; margin-bottom: 40px; }
+        
+        .ok-btn { background: rgba(0,0,0,0.3); color: white; border: 2px solid white; padding: 20px 40px; font-size: 24px; font-weight: bold; border-radius: 50px; cursor: pointer; width: 80%; margin: 0 auto; transition: background 0.3s; }
+        .ok-btn:active { background: rgba(0,0,0,0.6); }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    
+    <!-- State 1: Scanner -->
+    <div id="scanner-view">
+        <h2 style="color:#333;">Scan QR Code</h2>
+        <div id="reader"></div>
+    </div>
+
+    <!-- State 2: Processing API -->
+    <div id="loading-view">
+        <div class="spinner"></div>
+        <div id="loading-text">Verifying Database...</div>
+    </div>
+
+    <!-- State 3: Locked Result Screen -->
+    <div id="result-view">
+        <div id="status-icon">✅</div>
+        <h1 id="status-title">Success</h1>
+        <h2 id="guest-name">Name</h2>
+        <div id="guest-id">ID</div>
+        <button class="ok-btn" onclick="resetScanner()">OK / Next Scan</button>
+    </div>
+
+</div>
+
+<script>
+    // YOUR PROVIDED GOOGLE WEB APP URL
+    const GOOGLE_API_URL = "https://script.google.com/macros/s/AKfycbwthyLOA7NvH75ul1L8ew47Ds4hSmSQndcZ98eoUEfRUtQ-3Gzaf_05rObkpLwVKcXL/exec";
+    
+    let html5QrcodeScanner;
+
+    function initScanner() {
+        // Show scanner, hide others
+        document.getElementById('scanner-view').style.display = 'block';
+        document.getElementById('loading-view').style.display = 'none';
+        document.getElementById('result-view').style.display = 'none';
+        document.getElementById('result-view').className = ''; // reset colors
+
+        html5QrcodeScanner = new Html5QrcodeScanner("reader", { 
+            fps: 10, 
+            qrbox: {width: 250, height: 250},
+            aspectRatio: 1.0,
+            disableFlip: false 
+        });
+        
+        html5QrcodeScanner.render(onScanSuccess, onScanError);
+    }
+
+    function onScanSuccess(decodedText, decodedResult) {
+        // 1. Instantly Stop Camera to prevent double scanning
+        html5QrcodeScanner.clear();
+        
+        // 2. Switch UI to Loading
+        document.getElementById('scanner-view').style.display = 'none';
+        document.getElementById('loading-view').style.display = 'block';
+
+        // 3. Send Scanned ID to Google Sheets via GET request
+        fetch(`${GOOGLE_API_URL}?id=${encodeURIComponent(decodedText)}`)
+            .then(response => response.json())
+            .then(data => {
+                showResult(data.status, data.name, data.id);
+            })
+            .catch(error => {
+                showResult('error', 'Connection Error', decodedText);
+            });
+    }
+
+    function onScanError(errorMessage) {
+        // Background errors while searching for QR code (ignore these)
+    }
+
+    function showResult(status, name, id) {
+        // Hide loading, Show Result lock screen
+        document.getElementById('loading-view').style.display = 'none';
+        const resultView = document.getElementById('result-view');
+        resultView.style.display = 'flex';
+
+        document.getElementById('guest-name').innerText = name;
+        document.getElementById('guest-id').innerText = id;
+
+        // Apply visual colors and text based on Google Sheets response
+        if (status === 'success') {
+            resultView.classList.add('success-bg');
+            document.getElementById('status-icon').innerText = '✅';
+            document.getElementById('status-title').innerText = 'Check-in Successful';
+        } else if (status === 'duplicate') {
+            resultView.classList.add('warning-bg');
+            document.getElementById('status-icon').innerText = '⚠️';
+            document.getElementById('status-title').innerText = 'ALREADY CHECKED IN';
+        } else {
+            resultView.classList.add('error-bg');
+            document.getElementById('status-icon').innerText = '❌';
+            document.getElementById('status-title').innerText = 'Invalid / Not Found';
+            document.getElementById('guest-name').innerText = 'Unknown User';
+        }
+    }
+
+    function resetScanner() {
+        // This is the "OK" button function. It wipes the screen and reboots the camera.
+        initScanner();
+    }
+
+    // Start scanner on page load
+    window.onload = initScanner;
+</script>
+
+</body>
+</html>
